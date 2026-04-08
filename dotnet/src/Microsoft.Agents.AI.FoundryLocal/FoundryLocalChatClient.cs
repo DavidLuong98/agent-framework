@@ -33,9 +33,10 @@ namespace Microsoft.Agents.AI.FoundryLocal;
 /// </para>
 /// </remarks>
 #pragma warning disable OPENAI001
-public sealed class FoundryLocalChatClient : DelegatingChatClient
+public sealed class FoundryLocalChatClient : DelegatingChatClient, IAsyncDisposable
 {
     private readonly ChatClientMetadata _metadata;
+    private readonly IModel _model;
 
     /// <summary>
     /// Gets the <see cref="FoundryLocalManager"/> instance managing the local model service.
@@ -47,11 +48,12 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
     /// </summary>
     public string ModelId { get; }
 
-    private FoundryLocalChatClient(IChatClient innerClient, FoundryLocalManager manager, string modelId)
+    private FoundryLocalChatClient(IChatClient innerClient, FoundryLocalManager manager, string modelId, IModel model)
         : base(innerClient)
     {
         Manager = manager;
         ModelId = modelId;
+        _model = model;
         _metadata = new ChatClientMetadata("microsoft.foundry.local", defaultModelId: modelId);
     }
 
@@ -167,7 +169,7 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
         var chatClient = openAIClient.GetChatClient(resolvedModelId);
         var innerChatClient = chatClient.AsIChatClient();
 
-        return new FoundryLocalChatClient(innerChatClient, manager, resolvedModelId);
+        return new FoundryLocalChatClient(innerChatClient, manager, resolvedModelId, model);
     }
 
     /// <inheritdoc/>
@@ -178,6 +180,22 @@ public sealed class FoundryLocalChatClient : DelegatingChatClient
             : (serviceKey is null && serviceType == typeof(FoundryLocalManager))
             ? Manager
             : base.GetService(serviceType, serviceKey);
+    }
+
+    /// <summary>
+    /// Asynchronously unloads the model from the Foundry Local runtime and releases all resources.
+    /// </summary>
+    /// <returns>A <see cref="ValueTask"/> representing the asynchronous dispose operation.</returns>
+    /// <remarks>
+    /// This method calls <see cref="IModel.UnloadAsync"/> to release the model from device memory,
+    /// then disposes the underlying <see cref="DelegatingChatClient"/> resources (including the OpenAI HTTP client).
+    /// Prefer this over <see cref="DelegatingChatClient.Dispose()"/> in async contexts to ensure proper model cleanup.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        await _model.UnloadAsync().ConfigureAwait(false);
+        Dispose();
+        GC.SuppressFinalize(this);
     }
 }
 #pragma warning restore OPENAI001
